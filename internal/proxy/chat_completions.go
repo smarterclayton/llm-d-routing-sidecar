@@ -20,6 +20,8 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
@@ -30,7 +32,18 @@ var (
 	CompletionsPath = "/v1/completions"
 )
 
+var metricRunningRequests = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "running_proxy_requests",
+})
+
+func init() {
+	prometheus.Register(metricRunningRequests)
+}
+
 func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
+	defer metricRunningRequests.Dec()
+	metricRunningRequests.Inc()
+
 	var prefillHostPorts []string
 	prefillHostPorts = r.Header.Values(requestHeaderPrefillHostPort)
 

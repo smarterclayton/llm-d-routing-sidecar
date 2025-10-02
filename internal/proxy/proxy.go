@@ -17,6 +17,7 @@ limitations under the License.
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -31,6 +32,8 @@ import (
 
 	"github.com/go-logr/logr"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/expfmt"
 	"k8s.io/klog/v2"
 )
 
@@ -92,6 +95,9 @@ type Config struct {
 	// EnablePrefillerSampling configures the proxy to randomly choose from the set
 	// of provided prefill hosts instead of always using the first one.
 	EnablePrefillerSampling bool
+
+	// The number of backends to expect
+	ExpectedBackends int
 }
 
 type protocolRunner func(http.ResponseWriter, *http.Request, string)
@@ -114,7 +120,7 @@ type Server struct {
 
 // NewProxy creates a new routing reverse proxy
 func NewProxy(port string, decodeURL *url.URL, config Config) (*Server, error) {
-	cache, _ := lru.New[string, http.Handler](16) // nolint:all
+	cache, _ := lru.New[string, http.Handler](config.ExpectedBackends) // nolint:all
 
 	// Create SSRF protection validator
 	validator, err := NewAllowlistValidator(config.EnableSSRFProtection, config.InferencePoolNamespace, config.InferencePoolName)
@@ -152,6 +158,24 @@ func NewProxy(port string, decodeURL *url.URL, config Config) (*Server, error) {
 func (s *Server) Start(ctx context.Context) error {
 	logger := klog.FromContext(ctx).WithName("proxy server")
 	s.logger = logger
+
+	go func() {
+		buf := bytes.NewBuffer(make([]byte, 0, 1024))
+		for {
+			time.Sleep(5 * time.Second)
+			metrics, err := prometheus.DefaultGatherer.Gather()
+			if err != nil {
+				s.logger.Error(err, "Unable to gather metrics")
+			}
+			buf.Reset()
+			for _, mf := range metrics {
+				if _, err := expfmt.MetricFamilyToText(buf, mf); err != nil {
+					s.logger.Error(err, "Unable to write metrics to buffer")
+				}
+			}
+			s.logger.Info("Metrics", "body", buf.String())
+		}
+	}()
 
 	// Start SSRF protection validator
 	if err := s.allowlistValidator.Start(ctx); err != nil {
@@ -250,6 +274,8 @@ func (s *Server) createRoutes() *http.ServeMux {
 	decoderProxy := httputil.NewSingleHostReverseProxy(s.decoderURL)
 	if s.decoderURL.Scheme == "https" {
 		decoderProxy.Transport = &http.Transport{
+			// may need to set default max idle conns
+			// ForceAttemptHTTP2 is not needed, because uvicorn does not support HTTP2
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: s.config.DecoderInsecureSkipVerify,
 				MinVersion:         tls.VersionTLS12,
@@ -264,14 +290,13 @@ func (s *Server) createRoutes() *http.ServeMux {
 			},
 		}
 	}
-	decoderProxy.ErrorHandler = func(res http.ResponseWriter, _ *http.Request, err error) {
-
+	decoderProxy.ErrorHandler = func(res http.ResponseWriter, req *http.Request, err error) {
 		// Log errors from the decoder proxy
 		switch {
 		case errors.Is(err, syscall.ECONNREFUSED):
 			s.logger.Error(err, "waiting for model server to be ready")
 		default:
-			s.logger.Error(err, "http: proxy error")
+			s.logger.Error(err, "http: proxy error: %s [%s]", req.URL.Path, req.Header.Get("x-request-id"))
 		}
 		res.WriteHeader(http.StatusBadGateway)
 	}
