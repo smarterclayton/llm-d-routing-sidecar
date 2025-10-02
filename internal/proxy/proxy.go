@@ -98,6 +98,10 @@ type Config struct {
 
 	// The number of backends to expect
 	ExpectedBackends int
+
+	// The maximum idle connections to pool per host, set to expected per
+	// host sustained concurrency.
+	MaxIdleConnsPerHost int
 }
 
 type protocolRunner func(http.ResponseWriter, *http.Request, string)
@@ -275,6 +279,7 @@ func (s *Server) createRoutes() *http.ServeMux {
 	if s.decoderURL.Scheme == "https" {
 		decoderProxy.Transport = &http.Transport{
 			// may need to set default max idle conns
+			MaxIdleConnsPerHost: s.config.MaxIdleConnsPerHost,
 			// ForceAttemptHTTP2 is not needed, because uvicorn does not support HTTP2
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: s.config.DecoderInsecureSkipVerify,

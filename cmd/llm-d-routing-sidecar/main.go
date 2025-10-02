@@ -101,7 +101,8 @@ func main() {
 		InferencePoolName:           *inferencePoolName,
 		EnablePrefillerSampling:     *enablePrefillerSampling,
 
-		ExpectedBackends: 16,
+		ExpectedBackends:    16,
+		MaxIdleConnsPerHost: 5000,
 	}
 
 	proxy, err := proxy.NewProxy(*port, targetURL, config)
