@@ -71,9 +71,12 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	s.logger.V(4).Info("start", "x-request-id", r.Header.Get("x-request-id"))
+
 	if len(prefillHostPort) == 0 {
-		s.logger.V(4).Info("skip disaggregated prefill")
+		s.logger.V(4).Info("skip disaggregated prefill", "x-request-id", r.Header.Get("x-request-id"))
 		s.decoderProxy.ServeHTTP(w, r)
+		s.logger.V(4).Info("complete", "x-request-id", r.Header.Get("x-request-id"))
 		return
 	}
 
@@ -90,4 +93,5 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.V(4).Info("SSRF protection: prefill target allowed", "target", prefillHostPort)
 	s.runConnectorProtocol(w, r, prefillHostPort)
+	s.logger.V(4).Info("complete", "x-request-id", r.Header.Get("x-request-id"))
 }

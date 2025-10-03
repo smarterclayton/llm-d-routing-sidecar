@@ -166,7 +166,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		buf := bytes.NewBuffer(make([]byte, 0, 1024))
 		for {
-			time.Sleep(5 * time.Second)
+			time.Sleep(10 * time.Second)
 			metrics, err := prometheus.DefaultGatherer.Gather()
 			if err != nil {
 				s.logger.Error(err, "Unable to gather metrics")
@@ -299,9 +299,9 @@ func (s *Server) createRoutes() *http.ServeMux {
 		// Log errors from the decoder proxy
 		switch {
 		case errors.Is(err, syscall.ECONNREFUSED):
-			s.logger.Error(err, "waiting for model server to be ready")
+			s.logger.Error(err, "waiting for model server to be ready", "path", req.URL.Path, "x-request-id", req.Header.Get("x-request-id"))
 		default:
-			s.logger.Error(err, "http: proxy error: %s [%s]", req.URL.Path, req.Header.Get("x-request-id"))
+			s.logger.Error(err, "http: proxy error: %s [%s]", "path", req.URL.Path, "x-request-id", req.Header.Get("x-request-id"))
 		}
 		res.WriteHeader(http.StatusBadGateway)
 	}

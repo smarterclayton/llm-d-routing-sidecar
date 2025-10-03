@@ -32,6 +32,7 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 	defer r.Body.Close() //nolint:all
 	original, err := io.ReadAll(r.Body)
 	if err != nil {
+		s.logger.Error(err, "failed to read body from client", "x-request-id", r.Header.Get("x-request-id"))
 		w.WriteHeader(http.StatusBadRequest) // TODO: check FastAPI error code when failing to read body
 		w.Write([]byte(err.Error()))         //nolint:all
 		return
@@ -40,8 +41,9 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 	// Parse completion request
 	var completionRequest map[string]any
 	if err := json.Unmarshal(original, &completionRequest); err != nil {
+		s.logger.Error(err, "failed to unmarshal incoming completion request", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorJSONInvalid(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
@@ -49,8 +51,9 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 	// Generate unique request UUID
 	uuid, err := uuid.NewUUID()
 	if err != nil {
+		s.logger.Error(err, "failed to create uuid", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorBadGateway(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
@@ -83,8 +86,9 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 
 	pbody, err := json.Marshal(completionRequest)
 	if err != nil {
+		s.logger.Error(err, "failed to marshal prefill completion request", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorJSONInvalid(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
@@ -93,19 +97,20 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 
 	prefillHandler, err := s.prefillerProxyHandler(prefillPodHostPort)
 	if err != nil {
+		s.logger.Error(err, "failed to read retrieve prefill proxy handler", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorBadGateway(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
 
 	// 2. Forward request to prefiller
-	s.logger.V(5).Info("sending request to prefiller", "url", prefillPodHostPort, "body", string(pbody))
+	s.logger.V(4).Info("sending request to prefiller", "x-request-id", r.Header.Get("x-request-id"), "url", prefillPodHostPort, "body", string(pbody))
 	pw := &bufferedResponseWriter{}
 	prefillHandler.ServeHTTP(pw, preq)
 
 	if pw.statusCode < 200 || pw.statusCode >= 300 {
-		s.logger.Error(err, "request failed", "code", pw.statusCode)
+		s.logger.Error(err, "request failed", "code", pw.statusCode, "x-request-id", r.Header.Get("x-request-id"), "url", prefillPodHostPort, "body", pw.buffer.String())
 		w.WriteHeader(pw.statusCode)
 		return
 	}
@@ -113,8 +118,9 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 	// Process response - extract p/d fields
 	var prefillerResponse map[string]any
 	if err := json.Unmarshal([]byte(pw.buffer.String()), &prefillerResponse); err != nil {
+		s.logger.Error(err, "failed to unmarshal body from prefiller", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorJSONInvalid(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
@@ -126,7 +132,7 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 		s.logger.Info("warning: missing 'kv_transfer_params' field in prefiller response")
 	}
 
-	s.logger.V(5).Info("received prefiller response", requestFieldKVTransferParams, pKVTransferParams)
+	s.logger.V(4).Info("received prefiller response", "x-request-id", r.Header.Get("x-request-id"), requestFieldKVTransferParams, pKVTransferParams)
 
 	// Decode Stage
 
@@ -150,8 +156,9 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 
 	dbody, err := json.Marshal(completionRequest)
 	if err != nil {
+		s.logger.Error(err, "failed to marshal body for decode completion request", "x-request-id", r.Header.Get("x-request-id"))
 		if err := errorJSONInvalid(err, w); err != nil {
-			s.logger.Error(err, "failed to send error response to client")
+			s.logger.Error(err, "failed to send error response to client", "x-request-id", r.Header.Get("x-request-id"))
 		}
 		return
 	}
@@ -160,6 +167,6 @@ func (s *Server) runNIXLProtocolV2(w http.ResponseWriter, r *http.Request, prefi
 
 	// 2. Forward to local decoder.
 
-	s.logger.V(5).Info("sending request to decoder", "body", string(dbody))
+	s.logger.V(4).Info("sending request to decoder", "x-request-id", r.Header.Get("x-request-id"), "body", string(dbody))
 	s.decoderProxy.ServeHTTP(w, dreq)
 }
